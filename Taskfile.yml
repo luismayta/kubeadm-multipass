@@ -37,18 +37,10 @@ env:
     sh: echo build
   PROVISION_PATH:
     sh: echo provision
-  K8S_BUILD_PATH:
-    sh: echo {{.BUILD_PATH}}/k8s
-  K8S_BUILD_KEYS_PATH:
-    sh: echo {{.K8S_BUILD_PATH}}/keys
-  K8S_PROVISION_PATH:
-    sh: echo {{.PROVISION_PATH}}/k8s/manifests
   KUBECONFIG:
     sh: echo kubeconfig.yaml
   MOUNT_PATH:
     sh: echo /Volumes/Data/mnt
-  MOUNT_PATH_K8S_LOCAL:
-    sh: echo {{.MOUNT_PATH}}/k8s.local
 
 dotenv:
   - .env
@@ -144,4 +136,4 @@ tasks:
     desc: Setup environment of project
     cmds:
       - task: python:environment
-      - cmd: mkdir -p {{.K8S_BUILD_PATH}}
+      - cmd: mkdir -p {{.BUILD_PATH}}

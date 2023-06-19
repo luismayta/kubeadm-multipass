@@ -1,11 +1,33 @@
 version: "3"
 
+env:
+  MULTIPASS_BUILD_PATH:
+    sh: echo {{.BUILD_PATH}}/multipass
+  MULTIPASS_BUILD_KEYS_PATH:
+    sh: echo {{.MULTIPASS_BUILD_PATH}}/keys
+  MULTIPASS_KUBECONFIG:
+    sh: echo {{.MULTIPASS_BUILD_PATH}}/{{.KUBECONFIG}}
+  MULTIPASS_PROVISION_PATH:
+    sh: echo {{.PROVISION_PATH}}/multipass
+  MULTIPASS_MANIFEST_PATH:
+    sh: echo {{.MULTIPASS_PROVISION_PATH}}/manifests
+  MULTIPASS_MOUNT_PATH:
+    sh: echo {{.MOUNT_PATH}}/multipass
+
 tasks:
   check:
     desc: Exist multipass and dependences
     run: once
     deps:
       - task: check:multipass
+      - task: check:mkcert
+
+  check:mkcert:
+    desc: Exist mkcert
+    run: once
+    preconditions:
+      - sh: command -v mkcert
+        msg: "Please Install mkcert"
 
   check:multipass:
     desc: Exist multipass
@@ -19,19 +41,50 @@ tasks:
     run: once
     cmds:
       - task: make:path:build
-      - task: make:path:build:k8s
+      - task: make:path:build:keys
+      - task: make:path:mount
 
   make:path:build:
     desc: make path build
     run: once
     cmds:
-      - cmd: mkdir -p {{.BUILD_PATH}}
+      - cmd: mkdir -p {{.MULTIPASS_BUILD_PATH}}
 
-  make:path:build:k8s:
-    desc: make path build k8s
+  make:path:build:keys:
+    desc: make path build keys
     run: once
     cmds:
-      - cmd: mkdir -p {{.K8S_BUILD_PATH}}
+      - cmd: mkdir -p {{.MULTIPASS_BUILD_KEYS_PATH}}
+
+  make:path:mount:
+    run: once
+    desc: make path mount
+    cmds:
+      - cmd: mkdir -p {{.MULTIPASS_MOUNT_PATH}}
+
+  make:certificates:
+    desc: make certificates and export.
+    run: once
+    deps:
+      - task: check
+    cmds:
+      - cmd: mkcert '*.{{.K8S_DOMAIN}}'
+      - cmd: mkcert -install
+      - cmd: mkdir -p {{.MULTIPASS_BUILD_KEYS_PATH}}/
+      - cmd: mv _wildcard.{{.K8S_DOMAIN}}.pem {{.MULTIPASS_BUILD_KEYS_PATH}}/
+      - cmd: mv _wildcard.{{.K8S_DOMAIN}}-key.pem {{.MULTIPASS_BUILD_KEYS_PATH}}/
+    status:
+      - test -f {{.MULTIPASS_BUILD_KEYS_PATH}}/_wildcard.{{.K8S_DOMAIN}}.pem
+      - test -f {{.MULTIPASS_BUILD_KEYS_PATH}}/_wildcard.{{.K8S_DOMAIN}}-key.pem
+
+  setup:
+    desc: setup multipass.
+    run: once
+    deps:
+      - task: check:multipass
+    cmds:
+      - task: make:path
+      - task: make:certificates
 
   launch:
     desc: launch multipass.
@@ -57,22 +110,22 @@ tasks:
 
       - cmd: multipass exec {{.MULTIPASS_LAUNCH_NAME}} -- bash -c 'sudo systemctl restart kubelet'
       - cmd: multipass exec {{.MULTIPASS_LAUNCH_NAME}} -- bash -c 'sudo systemctl restart containerd'
-      - cmd: multipass exec {{.MULTIPASS_LAUNCH_NAME}} -- bash -c 'sudo cat /etc/kubernetes/admin.conf' > {{.KUBECONFIG}}
+      - cmd: multipass exec {{.MULTIPASS_LAUNCH_NAME}} -- bash -c 'sudo cat /etc/kubernetes/admin.conf' > {{.MULTIPASS_KUBECONFIG}}
         vars:
           MULTIPASS_LAUNCH_NAME: k8s-master
       - cmd: echo "now deploying tigera-operator ...."
-      - cmd: KUBECONFIG={{.KUBECONFIG}} helm repo add projectcalico https://docs.tigera.io/calico/charts
-      - cmd: KUBECONFIG={{.KUBECONFIG}} kubectl create namespace tigera-operator
-      - cmd: KUBECONFIG={{.KUBECONFIG}} helm install calico projectcalico/tigera-operator --version v3.24.5 -f provision/k8s/system/calico/resources/helm/values.yaml --namespace tigera-operator
+      - cmd: KUBECONFIG={{.MULTIPASS_KUBECONFIG}} helm repo add projectcalico https://docs.tigera.io/calico/charts
+      - cmd: KUBECONFIG={{.MULTIPASS_KUBECONFIG}} kubectl create namespace tigera-operator
+      - cmd: KUBECONFIG={{.MULTIPASS_KUBECONFIG}} helm install calico projectcalico/tigera-operator --version v3.24.5 -f provision/k8s/system/calico/resources/helm/values.yaml --namespace tigera-operator
       - cmd: echo "wait ...."
       - cmd: sleep 60
-      - cmd: KUBECONFIG={{.KUBECONFIG}} kubectl get pods -n calico-system
-      - cmd: KUBECONFIG={{.KUBECONFIG}} kubectl get nodes -o wide
-      - cmd: multipass exec {{.MULTIPASS_LAUNCH_NAME}} -- bash -c 'sudo kubeadm token create --print-join-command' > {{.BUILD_PATH}}/kubeadm_join.sh
+      - cmd: KUBECONFIG={{.MULTIPASS_KUBECONFIG}} kubectl get pods -n calico-system
+      - cmd: KUBECONFIG={{.MULTIPASS_KUBECONFIG}} kubectl get nodes -o wide
+      - cmd: multipass exec {{.MULTIPASS_LAUNCH_NAME}} -- bash -c 'sudo kubeadm token create --print-join-command' > {{.MULTIPASS_BUILD_PATH}}/kubeadm_join.sh
         vars:
           MULTIPASS_LAUNCH_NAME: k8s-master
       - cmd: echo "Now deploying the worker nodes"
-      - cmd: multipass mount {{.MOUNT_PATH_K8S_LOCAL}} {{.MULTIPASS_LAUNCH_NAME}}:/data
+      - cmd: multipass mount {{.MULTIPASS_MOUNT_PATH}} {{.MULTIPASS_LAUNCH_NAME}}:/data
     vars:
       MULTIPASS_LAUNCH_NAME: k8s-master
 
@@ -85,29 +138,14 @@ tasks:
           MULTIPASS_LAUNCH_NAME: k8s-node
           MULTIPASS_CLOUD_INIT_FILE: provision/multipass/kubernetes/node.yaml
           MULTIPASS_ARGS: -c 2 -m 2G --disk 20G
-      - cmd: multipass transfer {{.BUILD_PATH}}/kubeadm_join.sh {{.MULTIPASS_LAUNCH_NAME}}:kubeadm_join.sh
+      - cmd: multipass transfer {{.MULTIPASS_BUILD_PATH}}/kubeadm_join.sh {{.MULTIPASS_LAUNCH_NAME}}:kubeadm_join.sh
       - cmd: multipass exec {{.MULTIPASS_LAUNCH_NAME}} -- bash -c 'sudo chmod +x kubeadm_join.sh'
       - cmd: multipass exec {{.MULTIPASS_LAUNCH_NAME}} -- bash -c 'sudo sh ./kubeadm_join.sh'
-      - cmd: KUBECONFIG={{.KUBECONFIG}} kubectl label node {{.MULTIPASS_LAUNCH_NAME}} node-role.kubernetes.io/node=
-      - cmd: KUBECONFIG={{.KUBECONFIG}} kubectl get nodes
-      - cmd: multipass mount {{.MOUNT_PATH_K8S_LOCAL}} {{.MULTIPASS_LAUNCH_NAME}}:/data
+      - cmd: KUBECONFIG={{.MULTIPASS_KUBECONFIG}} kubectl label node {{.MULTIPASS_LAUNCH_NAME}} node-role.kubernetes.io/node=
+      - cmd: KUBECONFIG={{.MULTIPASS_KUBECONFIG}} kubectl get nodes
+      - cmd: multipass mount {{.MULTIPASS_MOUNT_PATH}} {{.MULTIPASS_LAUNCH_NAME}}:/data
     vars:
       MULTIPASS_LAUNCH_NAME: k8s-node
-
-  make:certificates:
-    desc: make certificates and export.
-    run: once
-    deps:
-      - task: check
-    cmds:
-      - cmd: mkcert '*.k8s.local'
-      - cmd: mkcert -install
-      - cmd: mkdir -p {{.K8S_BUILD_KEYS_PATH}}/
-      - cmd: mv _wildcard.k8s.local.pem {{.K8S_BUILD_KEYS_PATH}}/
-      - cmd: mv _wildcard.k8s.local-key.pem {{.K8S_BUILD_KEYS_PATH}}/
-    status:
-      - test -f {{.K8S_BUILD_KEYS_PATH}}/_wildcard.k8s.local.pem
-      - test -f {{.K8S_BUILD_KEYS_PATH}}/_wildcard.k8s.local-key.pem
 
   launch:traefik:
     desc: make traefik.
@@ -117,16 +155,16 @@ tasks:
     cmds:
       - task: make:certificates
       - cmd: |
-          cat <<EOF | KUBECONFIG={{.KUBECONFIG}} kubectl apply -f -
+          cat <<EOF | KUBECONFIG={{.MULTIPASS_KUBECONFIG}} kubectl apply -f -
           apiVersion: v1
           kind: Namespace
           metadata:
             name: traefik
           EOF
       - cmd: |
-          export TLS_CRT=$(cat {{.K8S_BUILD_KEYS_PATH}}/_wildcard.k8s.local.pem | base64)
-          export TLS_KEY=$(cat {{.K8S_BUILD_KEYS_PATH}}/_wildcard.k8s.local-key.pem | base64)
-          cat <<EOF | KUBECONFIG={{.KUBECONFIG}} kubectl apply -f -
+          export TLS_CRT=$(cat {{.MULTIPASS_BUILD_KEYS_PATH}}/_wildcard.{{.K8S_DOMAIN}}.pem | base64)
+          export TLS_KEY=$(cat {{.MULTIPASS_BUILD_KEYS_PATH}}/_wildcard.{{.K8S_DOMAIN}}-key.pem | base64)
+          cat <<EOF | KUBECONFIG={{.MULTIPASS_KUBECONFIG}} kubectl apply -f -
           apiVersion: v1
           kind: Secret
           data:
@@ -137,4 +175,4 @@ tasks:
             namespace: traefik
           type: kubernetes.io/tls
           EOF
-      - cmd: KUBECONFIG={{.KUBECONFIG}} kubectl apply -f {{.K8S_PROVISION_PATH}}/overlays/core/traefik/crd.yaml -n traefik
+      - cmd: KUBECONFIG={{.MULTIPASS_KUBECONFIG}} kubectl apply -f {{.MULTIPASS_PROVISION_PATH}}/overlays/core/traefik/crd.yaml -n traefik
