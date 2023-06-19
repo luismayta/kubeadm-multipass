@@ -1,0 +1,124 @@
+version: "3"
+
+env:
+  MINIKUBE_BUILD_PATH:
+    sh: echo {{.BUILD_PATH}}/minikube
+  MINIKUBE_BUILD_KEYS_PATH:
+    sh: echo {{.MINIKUBE_BUILD_PATH}}/keys
+  MINIKUBE_KUBECONFIG:
+    sh: echo {{.MINIKUBE_BUILD_PATH}}/{{.KUBECONFIG}}
+  MINIKUBE_PROVISION_PATH:
+    sh: echo {{.PROVISION_PATH}}/minikube
+  MINIKUBE_MANIFEST_PATH:
+    sh: echo {{.MINIKUBE_PROVISION_PATH}}/manifests
+  MINIKUBE_MOUNT_PATH:
+    sh: echo {{.MOUNT_PATH}}/minikube
+
+tasks:
+  check:
+    desc: Exist minikube and dependences
+    run: once
+    deps:
+      - task: check:minikube
+      - task: check:kubectl
+      - task: check:mkcert
+
+  check:mkcert:
+    desc: Exist mkcert
+    run: once
+    preconditions:
+      - sh: command -v mkcert
+        msg: "Please Install mkcert"
+
+  check:minikube:
+    desc: Exist minikube
+    run: once
+    preconditions:
+      - sh: command -v minikube
+        msg: "Please Install minikube"
+
+  check:kubectl:
+    desc: Exist kubectl
+    run: once
+    preconditions:
+      - sh: command -v kubectl
+        msg: "Please Install kubectl"
+
+  make:path:
+    desc: make paths
+    run: once
+    cmds:
+      - task: make:path:build
+      - task: make:path:build:keys
+      - task: make:path:mount
+
+  make:path:build:
+    desc: make path build
+    run: once
+    cmds:
+      - cmd: mkdir -p {{.MINIKUBE_BUILD_PATH}}
+
+  make:path:build:keys:
+    desc: make path build keys
+    run: once
+    cmds:
+      - cmd: mkdir -p {{.MINIKUBE_BUILD_KEYS_PATH}}
+
+  make:path:mount:
+    run: once
+    desc: make path mount
+    cmds:
+      - cmd: mkdir -p {{.MINIKUBE_MOUNT_PATH}}
+
+  make:certificates:
+    desc: make certificates and export.
+    run: once
+    deps:
+      - task: check
+    cmds:
+      - cmd: mkcert '*.{{.K8S_DOMAIN}}'
+      - cmd: mkcert -install
+      - cmd: mkdir -p {{.MINIKUBE_BUILD_KEYS_PATH}}/
+      - cmd: mv _wildcard.{{.K8S_DOMAIN}}.pem {{.MINIKUBE_BUILD_KEYS_PATH}}/
+      - cmd: mv _wildcard.{{.K8S_DOMAIN}}-key.pem {{.MINIKUBE_BUILD_KEYS_PATH}}/
+    status:
+      - test -f {{.MINIKUBE_BUILD_KEYS_PATH}}/_wildcard.{{.K8S_DOMAIN}}.pem
+      - test -f {{.MINIKUBE_BUILD_KEYS_PATH}}/_wildcard.{{.K8S_DOMAIN}}-key.pem
+
+  setup:
+    desc: launch minikube.
+    run: once
+    deps:
+      - task: check:minikube
+    cmds:
+      - task: make:path
+      - task: make:certificates
+      - cmd: minikube start
+      - cmd: minikube addons enable ingress
+      - cmd: minikube mount {{.MINIKUBE_MOUNT_PATH}}:/host
+
+  apply:
+    desc: apply kubectl.
+    run: once
+    deps:
+      - task: check
+    cmds:
+      - cmd: KUBECONFIG={{.MINIKUBE_KUBECONFIG}} kubectl apply -k {{.MANIFEST_PATH}}
+
+  apply:all:
+    desc: apply kubectl all.
+    run: once
+    deps:
+      - task: check
+    cmds:
+      - task: apply:core
+
+  apply:core:
+    desc: apply kubectl core.
+    run: once
+    deps:
+      - task: check
+    cmds:
+      - task: apply
+        vars:
+          MANIFEST_PATH: provision/minikube/manifests/overlays/core

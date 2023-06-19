@@ -14,6 +14,7 @@ includes:
   diagrams: ./provision/diagrams/Taskfile.yml
   multipass: ./provision/task/multipass.yml
   k8s: ./provision/task/k8s.yml
+  minikube: ./provision/task/minikube.yml
   crossplane: ./provision/task/crossplane.yml
 
 env:
@@ -30,18 +31,24 @@ env:
   README_YAML: provision/generators/README.yaml
   README_TEMPLATE: provision/templates/README.tpl.md
   README_INCLUDES: file://
+  K8S_DOMAIN:
+    sh: echo k8s.local
   BUILD_PATH:
     sh: echo build
+  PROVISION_PATH:
+    sh: echo provision
   K8S_BUILD_PATH:
     sh: echo {{.BUILD_PATH}}/k8s
   K8S_BUILD_KEYS_PATH:
     sh: echo {{.K8S_BUILD_PATH}}/keys
   K8S_PROVISION_PATH:
-    sh: echo provision/k8s/manifests
+    sh: echo {{.PROVISION_PATH}}/k8s/manifests
   KUBECONFIG:
-    sh: echo {{.K8S_BUILD_PATH}}/kubeconfig.yaml
+    sh: echo kubeconfig.yaml
+  MOUNT_PATH:
+    sh: echo /Volumes/Data/mnt
   MOUNT_PATH_K8S_LOCAL:
-    sh: echo /Volumes/Data/mnt/k8s.local
+    sh: echo {{.MOUNT_PATH}}/k8s.local
 
 dotenv:
   - .env
