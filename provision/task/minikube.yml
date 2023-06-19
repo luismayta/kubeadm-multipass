@@ -97,6 +97,14 @@ tasks:
       - cmd: minikube addons enable ingress
       - cmd: minikube mount {{.MINIKUBE_MOUNT_PATH}}:/host
 
+  mount:
+    desc: mount minikube.
+    run: once
+    deps:
+      - task: check:minikube
+    cmds:
+      - cmd: minikube mount {{.MINIKUBE_MOUNT_PATH}}:/host
+
   apply:
     desc: apply kubectl.
     run: once
